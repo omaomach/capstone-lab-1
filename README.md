@@ -197,7 +197,7 @@ In the AWS Console:
 ```bash
 curl -X POST <invoke-url>/submit \
   -H "Content-Type: application/json" \
-  -d '{"name": "Omao", "message": "Hello from curl"}'
+  -d '{"name": "Omao", "message": "Final capstone test"}'
 ```
 
 Expected response:
