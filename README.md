@@ -63,9 +63,7 @@ a custom dashboard.
 
 ---
 
-## Deployment
-
-### Prerequisites
+## Prerequisites
 
 - An AWS account with the AWS CLI v2 installed and configured (`aws configure`)
 - Docker
@@ -80,7 +78,16 @@ export ECR_REPO=capstone-webapp
 export STACK_NAME=capstone
 ```
 
-### Step 1 — Build and push the container image to ECR
+---
+
+## Step 1 — The Containerized Web App
+
+A static page is served by an Nginx container running on Amazon ECS Fargate
+behind an Application Load Balancer. The image is built from
+`webapp/Dockerfile`, pushed to Amazon ECR, and deployed with a CloudFormation
+template that provisions the entire stack.
+
+### Build and push the container image to ECR
 
 ```bash
 # Create the ECR repository
@@ -101,7 +108,7 @@ docker push \
 cd ..
 ```
 
-### Step 2 — Deploy the ECS infrastructure with CloudFormation
+### Deploy the ECS infrastructure with CloudFormation
 
 ```bash
 aws cloudformation deploy \
@@ -113,7 +120,17 @@ aws cloudformation deploy \
     ImageUri=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest
 ```
 
-Once the stack reaches `CREATE_COMPLETE`, retrieve the public URL:
+The template provisions a VPC with two public subnets across two Availability
+Zones, an Internet Gateway and route table, security groups, an Application
+Load Balancer with a target group and listener, an IAM execution role, a
+CloudWatch log group, an ECS cluster, a Fargate task definition referencing the
+ECR image, and an ECS service that keeps the task running and registered
+behind the load balancer.
+
+![CloudFormation stack — all resources created successfully](docs/screenshots/01a-cloudformation-stack.png)
+
+Once the stack reaches `CREATE_COMPLETE`, retrieve the public URL from the
+stack outputs:
 
 ```bash
 aws cloudformation describe-stacks \
@@ -123,13 +140,19 @@ aws cloudformation describe-stacks \
   --output text
 ```
 
-![CloudFormation stack — all resources created successfully](docs/screenshots/01a-cloudformation-stack.png)
-
 Open the URL in a browser to confirm the web application is live.
 
 ![Live ECS web application](docs/screenshots/01b-ecs-webapp-live.png)
 
-### Step 3 — Deploy the Lambda function
+---
+
+## Step 2 — The Serverless API
+
+An AWS Lambda function acts as a backend receiver for JSON payloads. Amazon
+API Gateway exposes the Lambda through a `POST /submit` endpoint deployed to a
+`prod` stage.
+
+### Deploy the Lambda function
 
 Package and create the function:
 
@@ -148,10 +171,14 @@ cd ..
 ```
 
 > The `lambda-basic-execution` IAM role must exist beforehand (trust policy:
-> `lambda.amazonaws.com`; managed policy: `AWSLambdaBasicExecutionRole`). It can
-> be created in the IAM console or via the AWS CLI.
+> `lambda.amazonaws.com`; managed policy: `AWSLambdaBasicExecutionRole`).
 
-### Step 4 — Create the REST API in API Gateway
+The function accepts a JSON payload, prints it to `console.log()` (which sends
+it to CloudWatch), and returns a `200` response with a generated submission ID.
+
+![Lambda function with API Gateway trigger](docs/screenshots/02a-lambda-function.png)
+
+### Create the REST API in API Gateway
 
 In the AWS Console:
 
@@ -165,7 +192,7 @@ In the AWS Console:
 5. **Deploy API** to a new stage named `prod`
 6. Copy the **Invoke URL** displayed at the top of the stage page
 
-### Step 5 — Test the endpoint
+### Test the endpoint
 
 ```bash
 curl -X POST <invoke-url>/submit \
@@ -184,11 +211,34 @@ Expected response:
 
 ![API Gateway test — successful 200 response](docs/screenshots/02-api-gateway-test.png)
 
-The Lambda logs each invocation to CloudWatch, including the incoming payload:
+---
+
+## Step 3 — Observability with CloudWatch
+
+CloudWatch captures every Lambda invocation. A custom dashboard surfaces the
+metrics and recent payloads in a single view.
+
+### Generate traffic and verify logs
+
+Sending several requests to the API populates Lambda's log group with the
+incoming payloads:
+
+```bash
+for i in 1 2 3 4 5; do
+  curl -X POST <invoke-url>/submit \
+    -H "Content-Type: application/json" \
+    -d "{\"name\": \"test $i\", \"message\": \"request $i\"}"
+  echo
+done
+```
+
+Each invocation writes a `Received data: {...}` entry to the
+`/aws/lambda/capstone-submit` log group, alongside the standard
+`START`/`END`/`REPORT` lines emitted by the Lambda runtime.
 
 ![CloudWatch logs — payload received and logged](docs/screenshots/03a-cloudwatch-logs.png)
 
-### Step 6 — Build the CloudWatch Dashboard
+### Build the CloudWatch Dashboard
 
 In the AWS Console:
 
@@ -207,18 +257,6 @@ In the AWS Console:
      ```
 4. Save the dashboard
 
-Generating traffic by hitting the API Gateway endpoint multiple times produces
-visible activity on the dashboard:
-
-```bash
-for i in 1 2 3 4 5; do
-  curl -X POST <invoke-url>/submit \
-    -H "Content-Type: application/json" \
-    -d "{\"name\": \"test $i\", \"message\": \"request $i\"}"
-  echo
-done
-```
-
 ![Custom CloudWatch Dashboard — Lambda invocations, errors, duration, and recent payloads](docs/screenshots/03b-cloudwatch-dashboard.png)
 
 ---
@@ -231,4 +269,3 @@ The deployment satisfies the four stated goals of the project:
 - **Containerized Application** — A Docker image built from `webapp/Dockerfile` is pushed to Amazon ECR and deployed to ECS Fargate, served behind an Application Load Balancer.
 - **Serverless API** — Amazon API Gateway exposes a `POST /submit` endpoint that integrates with an AWS Lambda function. The Lambda accepts JSON payloads, logs them to CloudWatch, and returns a success response with a generated submission ID.
 - **Observability** — A custom CloudWatch Dashboard (`capstone-observability`) visualizes Lambda invocations, errors, duration, and the most recent received payloads.
-# capstone-lab-1
